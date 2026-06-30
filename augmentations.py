@@ -14,7 +14,6 @@ def augmentTabular(md, y=None, noise_std=0.1, flip_cat_prob=0.05):
 		for col in cat_cols:
 			mask = np.random.rand(*md.X_unlab.shape) < flip_cat_prob
 			md.X_aug.loc[mask, col] = md.X_unlab.loc[mask, col].sample(frac=1).values
-	return md
 
 
 """Applies Compositional CutMix to some training data.
@@ -41,12 +40,10 @@ def augmentTabular(md, y=None, noise_std=0.1, flip_cat_prob=0.05):
 			low weight.
 """
 
-def compositionalCutmix(md, factor=10, weight=0.5):
+def compositionalCutmix(md, factor=2, weight=0.5):
 	X = md.X.copy()
 	y = md.y.copy()
 	w = np.ones_like(y)
-
-	print(y)
 
 	for val in [0]:
 		idxs = md.y == val
@@ -75,9 +72,6 @@ def compositionalCutmix(md, factor=10, weight=0.5):
 	md.X = X[idx].copy()
 	md.y = y[idx].copy()
 	# w[idx]
-	print("DONE CCUTMIX")
-	return md
-
 	# return X[idx], y[idx], w[idx]
 
 	

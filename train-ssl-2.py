@@ -16,33 +16,35 @@ import augmentations
 label_encoder = LabelEncoder()
 
 class ModelData:
-	features: pd.DataFrame
-	labels:   pd.DataFrame
-	X:        pd.DataFrame # reference for function congruency
-	y:        pd.DataFrame # reference for function congruency
-						   # augmentation function workon X and y
-						   # thus have them point to the necessary
-						   # data structure.
-	X_lab:    pd.DataFrame # input matrix (features)
-	y_lab:    pd.DataFrame # input labels
-	X_unlab:  pd.DataFrame # 50% of input set as unlabeled
-	y_unlab:  pd.DataFrame # pseudo labels
-	X_unlab_aug: pd.DataFrame # augmented unlabeled matrix
-	y_unlab_aug: pd.DataFrame # augmented pseudo labels
-	X_test:   pd.DataFrame # reserved data to test model
-	y_test:   pd.DataFrame # labels for model testing.
+	features: np.ndarray
+	labels:   np.ndarray
+	X:        np.ndarray # reference for function congruency
+	y:        np.ndarray # reference for function congruency
+						 # augmentation functionis work on X and y
+						 # thus have them point to the necessary
+						 # data structure.
+	X_lab:    np.ndarray # input matrix (features)
+	y_lab:    np.ndarray # input labels
+	X_unlab:  np.ndarray # 50% of input set as unlabeled
+	y_unlab:  np.ndarray # pseudo labels
+	X_unlab_aug: np.ndarray # augmented unlabeled matrix
+	y_unlab_aug: np.ndarray # augmented pseudo labels
+	X_test:   np.ndarray # reserved data to test model
+	y_test:   np.ndarray # labels for model testing.
 	y_pred:   np.ndarray 
+	feature_names: np.ndarray
 	name:     str
 
 def load_data(path, md):
 	data = pd.read_csv(path)
-	md.features = data.iloc[0:, data.columns != "Group"]
-	md.labels = data['Group']
-	return md
+	md.features = data.iloc[0:, data.columns != "Group"].to_numpy()
+	md.feature_names = data.columns[data.columns != "Group"].tolist()
+	md.labels = data['Group'].to_numpy()
 
 def preprocess(md):
 	# Handle missing values (if any)
-	md.features = md.features.fillna(0)  # Replace NaN with 0 (or use imputation)
+	# Replace NaN with 0 (or use imputation)
+	# md.features = md.features.fillna(0)  
 
 	# Normalize features (e.g., log-transform for counts)
 	# md.features = np.log1p(md.features)  # log(x+1) to avoid log(0)
@@ -59,17 +61,14 @@ def preprocess(md):
 		   	random_state=42, stratify=md.labels
 	)
 
+	# We can delete this data, it is no longer needed
+	del md.features, md.labels
+
 	# Second split: 50% train, 50% unlabeled
 	md.X_lab, md.X_unlab, md.y_lab, _ = train_test_split(
 			X_train_full, y_train_full, test_size=0.5,
-		   	random_state=42, stratify=y_train_full)
+		   	random_state=42, stratify=y_train_full)	
 
-	return md
-
-	# Standardize features
-	# scaler = StandardScaler()
-	# md.X_train = scaler.fit_transform(md.X_train)
-	# md.X_test = scaler.transform(md.X_test)
 
 def displayMetrics(md):
 	print(md.name)
@@ -97,11 +96,14 @@ def createConfusionMatrix(md):
 	starttime = datetime.now().strftime("%H%M%S")
 	plt.savefig(md.name + ".cm." + starttime + ".png")
 
-
+#@profile
 def fixmatchLoop(md):
 	tau = .9
-	totalLoops = 50
+	totalLoops = 6 
 	md.name = "randomforest"
+
+	print(f"Initial Tau: {tau}")
+	print(f"Total Loops: {totalLoops}")
 
 	# Conservative value for RF because dataset only has 60 samples.
 	rf = RandomForestClassifier(
@@ -125,22 +127,24 @@ def fixmatchLoop(md):
 	# We can test the augmentation before the loop
 	# md = augmentations.compositionalCutmix(md)
 	# md.y_pred = rf.predict(md.X_test)
-	# return
+	# return rf
 
 	for loop in range(totalLoops):
-		# Augment unlabeled data using pseudo-labels (strong aug)
-		md = augmentations.compositionalCutmix(md)
-		# md = augmentations.aitchisonMixup(md)
+		# WEAK Augmentation (for pseudo-labeling) 
+		augmentations.compositionalCutmix(md)
 
 		# Predict on unlabeled data
-		pseudo_unlab  = rf.predict_proba(md.X)
+		pseudo_unlab = rf.predict_proba(md.X)
 		md.y = np.argmax(pseudo_unlab, axis=1)
-		confidences   = np.max(pseudo_unlab, axis=1)
+		confidences = np.max(pseudo_unlab, axis=1)
 
 		# Filter high-confidence pseudo-labels
 		mask = confidences >= tau
 		X_pseudo = md.X[mask]
 		y_pseudo = md.y[mask]
+
+		#if(loop == (totalLoops - 1)):
+			#print (mask)
 
 		# Combine labeled + pseudo-labeled data
 		X_combined = np.vstack([md.X_lab, X_pseudo])
@@ -151,14 +155,18 @@ def fixmatchLoop(md):
 
 		# Optional: Decay tau over time (e.g., tau = max(0.7, 0.9 - 0.02*loop)
 		#tau = max(0.7, 0.9 - 0.02 * loop)
+		# tau = tau - .05
+	
+		md.y_pred = rf.predict(md.X_test)
+		print(f"Accuracy: {accuracy_score(md.y_test, md.y_pred):.2f}")
 
-	md.y_pred = rf.predict(md.X_test)
-	return md, rf
+	# md.y_pred = rf.predict(md.X_test)
+	return rf
 
 
 def rfFeatureImportance(md, classifier):
 	featImp = pd.DataFrame({
-		"Feature": md.features.columns,
+		"Feature": md.feature_names,
 		"Importance": classifier.feature_importances_,
 	}).sort_values("Importance", ascending=False)
 
@@ -190,14 +198,14 @@ def main():
 
 	printTime("Process Start")
 	md = ModelData()
-	md = load_data(infile, md)
-	md = preprocess(md)
+	load_data(infile, md)
+	preprocess(md)
 
-	printTime("Random Forest start")
-	md, rf = fixmatchLoop(md)
-	#rfFeatureImportance(md, rf)
-	#displayMetrics(md)
-	printTime("Random Forest End")
+	#printTime("Random Forest start")
+	rf = fixmatchLoop(md)
+	rfFeatureImportance(md, rf)
+	displayMetrics(md)
+	#printTime("Random Forest End")
 
 	printTime("Process End")
 
