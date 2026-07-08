@@ -119,10 +119,10 @@ def TrainingLoop(md):
 		augmentations.augmentTabular(md)
 
 		# DEBUG: Output the augmented data to a tsv file 
-		# np.savetxt('output.tsv', md.X_unlab, delimiter='\t', fmt='%.8e')
+		# np.savetxt('output.tsv', md.X_aug, delimiter='\t', fmt='%.8e')
 
 		# Predict on unlabeled data
-		pseudo_unlab = rf.predict_proba(md.X)
+		pseudo_unlab = rf.predict_proba(md.X_aug)
 		# outputArray(pseudo_unlab)
 		md.y = np.argmax(pseudo_unlab, axis=1)
 		# outputArray(md.y)
@@ -152,7 +152,7 @@ def TrainingLoop(md):
 
 		# Optional: Decay tau over time (e.g., tau = max(0.7, 0.9 - 0.02*loop)
 		#tau = max(0.7, 0.9 - 0.02 * loop)
-		# tau = tau - .05
+		tau = tau - .05
 	
 		md.y_pred = rf.predict(md.X_test)
 		# Keep track of accuracies for plotting
@@ -168,9 +168,10 @@ def createPlot(md):
 	plt.clf()
 	plt.plot(md.min_confidence, "b-", linewidth=2)
 	plt.plot(md.max_confidence, "r-", linewidth=2)
+	plt.plot(md.acc_per_loop, "g-", linewidth=2)
 	plt.xlabel("Iteration")
-	plt.ylabel("Confidences")
-	plt.title("Confidences per iteration")
+	plt.ylabel("Accuracy/Confidence %")
+	plt.title("Values per iteration")
 	plt.grid(True, alpha=0.3)
 	plt.xticks(np.arange(0, 21, 1))
 	# Save the plot to an image file
