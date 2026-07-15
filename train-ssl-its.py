@@ -25,10 +25,10 @@ class ModelData:
 						 # augmentation functions work on X and y
 						 # so have them point to the necessary
 						 # data structure.
-	X_lab:    np.ndarray # input matrix (features)
-	y_lab:    np.ndarray # input labels
-	X_unlab:  np.ndarray # 50% of input set as unlabeled
-	y_unlab:  np.ndarray # pseudo labels
+	X_labeled:    np.ndarray # input matrix (features)
+	y_labeled:    np.ndarray # input labels
+	X_unlabeled:  np.ndarray # 50% of input set as unlabeled
+	y_unlabeled:  np.ndarray # pseudo labels
 	#X_unlab_aug: np.ndarray # augmented unlabeled matrix
 	#y_unlab_aug: np.ndarray # augmented pseudo labels
 	X_test:   np.ndarray # reserved data to test model
@@ -36,9 +36,10 @@ class ModelData:
 	y_pred:   np.ndarray	
 	feature_names:   np.ndarray
 	acc_per_loop:    np.ndarray
-	min_confidence:  np.ndarray
 	max_confidence:  np.ndarray
-	name:     str
+	tau_per_loop:	 np.array
+	min_confidence:  np.ndarray
+	name: str
 
 def load_data(path, md):
 	data = pd.read_csv(path)
@@ -52,7 +53,7 @@ def preprocess(md):
 	# md.features = md.features.fillna(0)  
 
 	# Normalize features (e.g., log-transform for counts)
-	# md.features = np.log1p(md.features)  # log(x+1) to avoid log(0)
+	md.features = np.log1p(md.features)  # log(x+1) to avoid log(0)
 
 	# Encode labels if categorical (e.g., 'A', 'B' -> 0, 1) 
 	# if labels.dtype == 'str': 
@@ -60,6 +61,7 @@ def preprocess(md):
 
 	# initialize these arrays so that they can be appended to
 	md.acc_per_loop = np.array([]) 
+	md.tau_per_loop = np.array([]) 
 	md.max_confidence = np.array([]) 
 	md.min_confidence = np.array([]) 
 
@@ -75,18 +77,18 @@ def preprocess(md):
 	del md.features, md.labels
 
 	# Second split: 50% train, 50% unlabeled
-	md.X_lab, md.X_unlab, md.y_lab, _ = train_test_split(
+	md.X_labeled, md.X_unlabeled, md.y_labeled, _ = train_test_split(
 			X_train_full, y_train_full, test_size=0.5,
 		   	random_state=42, stratify=y_train_full)	
 
 #@profile
 def TrainingLoop(md):
-	tau = .9
-	totalLoops = 20
+	tau = .8
+	md.totalLoops = 100
 	md.name = "randomforest"
 
 	print(f"Initial Tau: {tau}")
-	print(f"Total Loops: {totalLoops}")
+	print(f"Total Loops: {md.totalLoops}")
 
 	# Conservative value for RF because dataset only has 60 samples.
 	rf = RandomForestClassifier(
@@ -100,29 +102,33 @@ def TrainingLoop(md):
 
 	# initialize pseudo labels.
 	# This is only needed if augmentation requires it
-	# pseudo_labels = np.zeros(len(md.X_unlab), dtype=int)
-	# md.y_unlab = pseudo_labels
-	# md.y = md.y_unlab			# X & y references keep augmentation
-	md.X = md.X_unlab			# functions generic
+	# pseudo_labels = np.zeros(len(md.X_unlabeled), dtype=int)
+	# md.y_unlabeled = pseudo_labels
+	# md.y = md.y_unlabeled			# X & y references keep augmentation
+	md.X = md.X_unlabeled			# functions generic
 
 	# The Teacher - train on the labeled data
-	rf.fit(md.X_lab, md.y_lab)
+	rf.fit(md.X_labeled, md.y_labeled)
 
 	# We can test the augmentation before the loop
 	# md = augmentations.compositionalCutmix(md)
 	# md.y_pred = rf.predict(md.X_test)
 	# return rf
 
-	for loop in range(totalLoops):
+	# initialize the combined arrays
+	X_combined = md.X_labeled
+	y_combined = md.y_labeled 
+
+	for loop in range(md.totalLoops):
 		# Weak Augmentation (for pseudo-labeling)
 		# We only want to slightly perturb the data	
 		augmentations.augmentTabular(md)
 
 		# DEBUG: Output the augmented data to a tsv file 
-		# np.savetxt('output.tsv', md.X_aug, delimiter='\t', fmt='%.8e')
+		# np.savetxt('output.tsv', md.X_augmented, delimiter='\t', fmt='%.8e')
 
 		# Predict on unlabeled data
-		pseudo_unlab = rf.predict_proba(md.X_aug)
+		pseudo_unlab = rf.predict_proba(md.X_augmented)
 		# outputArray(pseudo_unlab)
 		md.y = np.argmax(pseudo_unlab, axis=1)
 		# outputArray(md.y)
@@ -140,25 +146,27 @@ def TrainingLoop(md):
 		X_pseudo = md.X[mask]
 		y_pseudo = md.y[mask]
 
-		#if(loop == (totalLoops - 1)):
+		#if(loop == (md.totalLoops - 1)):
 			#print (mask)
 
 		# Combine labeled + pseudo-labeled data
-		X_combined = np.vstack([md.X_lab, X_pseudo])
-		y_combined = np.concatenate([md.y_lab, y_pseudo])
+		X_combined = np.vstack([X_combined, X_pseudo])
+		y_combined = np.concatenate([y_combined, y_pseudo])
 
 		# Train on combined data
 		rf.fit(X_combined, y_combined)
 
-		# Optional: Decay tau over time (e.g., tau = max(0.7, 0.9 - 0.02*loop)
-		#tau = max(0.7, 0.9 - 0.02 * loop)
-		tau = tau - .05
+		# Decay tau over time 
+		md.tau_per_loop = np.append(md.tau_per_loop, tau)
+		tau = max(0.7, tau - 0.002)
+		# tau = tau - .002
+
 	
 		md.y_pred = rf.predict(md.X_test)
 		# Keep track of accuracies for plotting
 		acc = accuracy_score(md.y_test, md.y_pred);
 		md.acc_per_loop = np.append(md.acc_per_loop, acc)
-		print(f"Accuracy: {acc:.2f}")
+		print(f"Tau: {tau: .3f} \t Accuracy: {acc:.2f}")
 
 	# md.y_pred = rf.predict(md.X_test)
 	return rf
@@ -166,14 +174,18 @@ def TrainingLoop(md):
 
 def createPlot(md):
 	plt.clf()
-	plt.plot(md.min_confidence, "b-", linewidth=2)
-	plt.plot(md.max_confidence, "r-", linewidth=2)
-	plt.plot(md.acc_per_loop, "g-", linewidth=2)
+	plt.plot(md.min_confidence, "b-", linewidth=1, label="Min Confidence")
+	plt.plot(md.max_confidence, "r-", linewidth=1, label="Max Confidence")
+	plt.plot(md.acc_per_loop,   "g-", linewidth=1, label="Accuracy")
+	plt.plot(md.tau_per_loop,	"y-", linewidth=1, label="Tau")
 	plt.xlabel("Iteration")
 	plt.ylabel("Accuracy/Confidence %")
 	plt.title("Values per iteration")
+	plt.legend(loc='best')
 	plt.grid(True, alpha=0.3)
-	plt.xticks(np.arange(0, 21, 1))
+	# from 0 to total loop in steps of ....
+	plt.xticks(np.arange(0, md.totalLoops + 1,
+		(md.totalLoops if md.totalLoops < 10 else md.totalLoops / 10)))
 	# Save the plot to an image file
 	now = datetime.now().strftime("%Y-%m-%d-%H%M%S")
 	plt.savefig(md.name + ".confidence." + now + ".png", dpi=300, bbox_inches='tight')

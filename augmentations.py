@@ -1,15 +1,15 @@
 import numpy as np
 
-def augmentTabular(md, y=None, noise_std=0.1, flip_cat_prob=0.05):
+def augmentTabular(md, y=None, noise_std=0.1):
     # Create copy of input data
-    md.X_aug = md.X_unlab.copy()
+    md.X_augmented = md.X_unlabeled.copy()
 
-    numeric_mask = np.isfinite(md.X_unlab).all(axis=0)
+    numeric_mask = np.isfinite(md.X_unlabeled).all(axis=0)
     if numeric_mask.any():
-        md.X_aug[:, numeric_mask] += np.random.normal(
+        md.X_augmented[:, numeric_mask] += np.random.normal(
             0,
-            noise_std * np.std(md.X_unlab[:, numeric_mask], axis=0),
-            size=md.X_unlab.shape
+            noise_std * np.std(md.X_unlabeled[:, numeric_mask], axis=0),
+            size=md.X_unlabeled.shape
         )
 
 
