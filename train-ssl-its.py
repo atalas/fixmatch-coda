@@ -1,5 +1,6 @@
 # Iterative Teacher-Student implementation
 
+import multiprocessing
 import pandas as pd
 import numpy as np
 import sys
@@ -37,8 +38,11 @@ class ModelData:
 	feature_names:   np.ndarray
 	acc_per_loop:    np.ndarray
 	max_confidence:  np.ndarray
-	tau_per_loop:	 np.array
+	tau_per_loop:	 np.ndarray
 	min_confidence:  np.ndarray
+	percent_confident: np.ndarray
+	noise: float
+	tau: float
 	name: str
 
 def load_data(path, md):
@@ -48,12 +52,16 @@ def load_data(path, md):
 	md.labels = data['Group'].to_numpy()
 
 def preprocess(md):
-	# Handle missing values (if any)
-	# Replace NaN with 0 (or use imputation)
-	# md.features = md.features.fillna(0)  
+    # handle zeros
+	pseudo_count = 1.0 
+	features_safe = md.features + pseudo_count
 
-	# Normalize features (e.g., log-transform for counts)
-	md.features = np.log1p(md.features)  # log(x+1) to avoid log(0)
+	# Calculate the geometric mean across features for each sample
+	# (row-wise, axis=1)
+	geom_mean = np.exp(np.mean(np.log(features_safe), axis=1, keepdims=True))
+	
+	# Apply the Centered Log-Ratio (CLR)
+	md.features = np.log(features_safe / geom_mean)
 
 	# Encode labels if categorical (e.g., 'A', 'B' -> 0, 1) 
 	# if labels.dtype == 'str': 
@@ -64,6 +72,7 @@ def preprocess(md):
 	md.tau_per_loop = np.array([]) 
 	md.max_confidence = np.array([]) 
 	md.min_confidence = np.array([]) 
+	md.percent_confident = np.array([]) 
 
 	# Split into train/test sets 
 	# First split: 80% data, 20% test (unlabeled)
@@ -83,11 +92,11 @@ def preprocess(md):
 
 #@profile
 def TrainingLoop(md):
-	tau = .8
-	md.totalLoops = 100
+	#md.tau = .80
+	#md.noise = .001
+	md.totalLoops = 10
 	md.name = "randomforest"
 
-	print(f"Initial Tau: {tau}")
 	print(f"Total Loops: {md.totalLoops}")
 
 	# Conservative value for RF because dataset only has 60 samples.
@@ -122,7 +131,7 @@ def TrainingLoop(md):
 	for loop in range(md.totalLoops):
 		# Weak Augmentation (for pseudo-labeling)
 		# We only want to slightly perturb the data	
-		augmentations.augmentTabular(md)
+		augmentations.augmentTabular(md, noise_std=md.noise)
 
 		# DEBUG: Output the augmented data to a tsv file 
 		# np.savetxt('output.tsv', md.X_augmented, delimiter='\t', fmt='%.8e')
@@ -135,13 +144,13 @@ def TrainingLoop(md):
 		confidences = np.max(pseudo_unlab, axis=1)
 		md.max_confidence = np.append(md.max_confidence, np.max(confidences))
 		md.min_confidence = np.append(md.min_confidence, np.min(confidences))
+		md.percent_confident = np.append(
+			md.percent_confident, np.mean(confidences >= md.tau)) # * 100 
+
 		# outputArray(confidences)
 
-		# Strong augmentation step
-		#augmentations.compositionalCutmix(md)
-
 		# Filter high-confidence pseudo-labels
-		mask = confidences >= tau
+		mask = confidences >= md.tau
 		# Use strongly augmented data for training
 		X_pseudo = md.X[mask]
 		y_pseudo = md.y[mask]
@@ -157,30 +166,35 @@ def TrainingLoop(md):
 		rf.fit(X_combined, y_combined)
 
 		# Decay tau over time 
-		md.tau_per_loop = np.append(md.tau_per_loop, tau)
-		tau = max(0.7, tau - 0.002)
-		# tau = tau - .002
+		# md.tau_per_loop = np.append(md.tau_per_loop, md.tau)
+		# md.tau = max(0.7, md.tau - 0.002)
+		# md.tau = md.tau - .002
 
 	
 		md.y_pred = rf.predict(md.X_test)
 		# Keep track of accuracies for plotting
 		acc = accuracy_score(md.y_test, md.y_pred);
 		md.acc_per_loop = np.append(md.acc_per_loop, acc)
-		print(f"Tau: {tau: .3f} \t Accuracy: {acc:.2f}")
+		print(f"Loop: {loop} \t Accuracy: {acc:.2f}")
 
 	# md.y_pred = rf.predict(md.X_test)
 	return rf
 
 
 def createPlot(md):
+	font = {'family': 'serif', 'size': 8}
+
 	plt.clf()
 	plt.plot(md.min_confidence, "b-", linewidth=1, label="Min Confidence")
 	plt.plot(md.max_confidence, "r-", linewidth=1, label="Max Confidence")
 	plt.plot(md.acc_per_loop,   "g-", linewidth=1, label="Accuracy")
-	plt.plot(md.tau_per_loop,	"y-", linewidth=1, label="Tau")
+	# plt.plot(md.tau_per_loop,	"y-", linewidth=1, label="Tau")
+	plt.plot(md.percent_confident, "y-", linewidth=1,
+		label="Percent Confident")
+	
 	plt.xlabel("Iteration")
 	plt.ylabel("Accuracy/Confidence %")
-	plt.title("Values per iteration")
+	plt.title("Per iteration Tau =" + str(md.tau) + " - Noise = " + str(md.noise))
 	plt.legend(loc='best')
 	plt.grid(True, alpha=0.3)
 	# from 0 to total loop in steps of ....
@@ -188,7 +202,7 @@ def createPlot(md):
 		(md.totalLoops if md.totalLoops < 10 else md.totalLoops / 10)))
 	# Save the plot to an image file
 	now = datetime.now().strftime("%Y-%m-%d-%H%M%S")
-	plt.savefig(md.name + ".confidence." + now + ".png", dpi=300, bbox_inches='tight')
+	plt.savefig("rf-T" + str(md.tau) + "-N" + str(md.noise) + ".png", dpi=300, bbox_inches='tight')
 
 
 def displayMetrics(md):
@@ -259,8 +273,58 @@ def main():
 	preprocess(md)
 
 	#printTime("Random Forest start")
+    
+	md.tau = .80
+	md.noise = .001
 	rf = TrainingLoop(md)
 	createPlot(md)
+	md.tau = .85
+	md.noise = .001
+	rf = TrainingLoop(md)
+	createPlot(md)
+	md.tau = .90
+	md.noise = .001
+	rf = TrainingLoop(md)
+	createPlot(md)
+	md.tau = .95
+	md.noise = .001
+	rf = TrainingLoop(md)
+	createPlot(md)
+
+	md.tau = .80
+	md.noise = .01
+	rf = TrainingLoop(md)
+	createPlot(md)
+	md.tau = .85
+	md.noise = .01
+	rf = TrainingLoop(md)
+	createPlot(md)
+	md.tau = .90
+	md.noise = .01
+	rf = TrainingLoop(md)
+	createPlot(md)
+	md.tau = .95
+	md.noise = .01
+	rf = TrainingLoop(md)
+	createPlot(md)
+
+	md.tau = .80
+	md.noise = .1
+	rf = TrainingLoop(md)
+	createPlot(md)
+	md.tau = .85
+	md.noise = .1
+	rf = TrainingLoop(md)
+	createPlot(md)
+	md.tau = .90
+	md.noise = .1
+	rf = TrainingLoop(md)
+	createPlot(md)
+	md.tau = .95
+	md.noise = .1
+	rf = TrainingLoop(md)
+	createPlot(md)
+
 	# rfFeatureImportance(md, rf)
 	# displayMetrics(md)
 	#printTime("Random Forest End")
