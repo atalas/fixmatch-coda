@@ -3,6 +3,7 @@
 import multiprocessing
 import pandas as pd
 import numpy as np
+import time
 import sys
 
 from sklearn.ensemble import RandomForestClassifier
@@ -29,7 +30,7 @@ class ModelData:
 	X_labeled:    np.ndarray # input matrix (features)
 	y_labeled:    np.ndarray # input labels
 	X_unlabeled:  np.ndarray # 50% of input set as unlabeled
-	y_unlabeled:  np.ndarray # pseudo labels
+	#y_unlabeled:  np.ndarray # pseudo labels
 	#X_unlab_aug: np.ndarray # augmented unlabeled matrix
 	#y_unlab_aug: np.ndarray # augmented pseudo labels
 	X_test:   np.ndarray # reserved data to test model
@@ -44,6 +45,8 @@ class ModelData:
 	noise: float
 	tau: float
 	name: str
+	xcombined_shape: np.ndarray
+
 
 def load_data(path, md):
 	data = pd.read_csv(path)
@@ -72,7 +75,8 @@ def preprocess(md):
 	md.tau_per_loop = np.array([]) 
 	md.max_confidence = np.array([]) 
 	md.min_confidence = np.array([]) 
-	md.percent_confident = np.array([]) 
+	md.percent_confident = np.array([])
+	md.xcombined_shape = np.array([])
 
 	# Split into train/test sets 
 	# First split: 80% data, 20% test (unlabeled)
@@ -88,13 +92,13 @@ def preprocess(md):
 	# Second split: 50% train, 50% unlabeled
 	md.X_labeled, md.X_unlabeled, md.y_labeled, _ = train_test_split(
 			X_train_full, y_train_full, test_size=0.5,
-		   	random_state=42, stratify=y_train_full)	
+		   	random_state=42, stratify=y_train_full)
 
 #@profile
 def TrainingLoop(md):
 	#md.tau = .80
 	#md.noise = .001
-	md.totalLoops = 10
+	#md.totalLoops = 10
 	md.name = "randomforest"
 
 	print(f"Total Loops: {md.totalLoops}")
@@ -128,6 +132,10 @@ def TrainingLoop(md):
 	X_combined = md.X_labeled
 	y_combined = md.y_labeled 
 
+	# Debug
+	md.xcombined_shape = np.append(md.xcombined_shape, X_combined.shape[0])
+	print("00 - X_combined size:" + str(X_combined.shape[0]));
+
 	for loop in range(md.totalLoops):
 		# Weak Augmentation (for pseudo-labeling)
 		# We only want to slightly perturb the data	
@@ -138,22 +146,25 @@ def TrainingLoop(md):
 
 		# Predict on unlabeled data
 		pseudo_unlab = rf.predict_proba(md.X_augmented)
+		
 		# outputArray(pseudo_unlab)
+
+		# Convert probability predictions into class labels
 		md.y = np.argmax(pseudo_unlab, axis=1)
-		# outputArray(md.y)
+	
 		confidences = np.max(pseudo_unlab, axis=1)
-		md.max_confidence = np.append(md.max_confidence, np.max(confidences))
-		md.min_confidence = np.append(md.min_confidence, np.min(confidences))
 		md.percent_confident = np.append(
 			md.percent_confident, np.mean(confidences >= md.tau)) # * 100 
 
-		# outputArray(confidences)
-
 		# Filter high-confidence pseudo-labels
 		mask = confidences >= md.tau
+		indexes = np.where(mask)[0]  # Returns array of indexes
+
+		print("\tConfidences shape:" + str(confidences.shape[0]))
+		print("\tIndexes shape:" + str(indexes.shape[0]))
 		# Use strongly augmented data for training
-		X_pseudo = md.X[mask]
-		y_pseudo = md.y[mask]
+		X_pseudo = md.X[indexes]
+		y_pseudo = md.y[indexes]
 
 		#if(loop == (md.totalLoops - 1)):
 			#print (mask)
@@ -161,6 +172,8 @@ def TrainingLoop(md):
 		# Combine labeled + pseudo-labeled data
 		X_combined = np.vstack([X_combined, X_pseudo])
 		y_combined = np.concatenate([y_combined, y_pseudo])
+		print("\t" + str(loop) + " - X_combined size:" + str(X_combined.shape[0]));
+		md.xcombined_shape = np.append(md.xcombined_shape, X_combined.shape[0])
 
 		# Train on combined data
 		rf.fit(X_combined, y_combined)
@@ -175,7 +188,7 @@ def TrainingLoop(md):
 		# Keep track of accuracies for plotting
 		acc = accuracy_score(md.y_test, md.y_pred);
 		md.acc_per_loop = np.append(md.acc_per_loop, acc)
-		print(f"Loop: {loop} \t Accuracy: {acc:.2f}")
+		print(f"\tLoop: {loop} \t Accuracy: {acc:.2f}")
 
 	# md.y_pred = rf.predict(md.X_test)
 	return rf
@@ -185,8 +198,6 @@ def createPlot(md):
 	font = {'family': 'serif', 'size': 8}
 
 	plt.clf()
-	plt.plot(md.min_confidence, "b-", linewidth=1, label="Min Confidence")
-	plt.plot(md.max_confidence, "r-", linewidth=1, label="Max Confidence")
 	plt.plot(md.acc_per_loop,   "g-", linewidth=1, label="Accuracy")
 	# plt.plot(md.tau_per_loop,	"y-", linewidth=1, label="Tau")
 	plt.plot(md.percent_confident, "y-", linewidth=1,
@@ -202,7 +213,25 @@ def createPlot(md):
 		(md.totalLoops if md.totalLoops < 10 else md.totalLoops / 10)))
 	# Save the plot to an image file
 	now = datetime.now().strftime("%Y-%m-%d-%H%M%S")
-	plt.savefig("rf-T" + str(md.tau) + "-N" + str(md.noise) + ".png", dpi=300, bbox_inches='tight')
+	plt.savefig("rf-T" + str(md.tau) + "-N" + str(md.noise) + "-" + now + ".png", dpi=300, bbox_inches='tight')
+
+def createDebugPlot(md):
+	font = {'family': 'serif', 'size': 8}
+
+	plt.clf()
+	plt.plot(md.xcombined_shape, "r-", linewidth=1, label="Trained")
+	
+	plt.xlabel("Iteration")
+	plt.ylabel("Train Data Size")
+	plt.title("Training Data Growth Tau =" + str(md.tau) + " - Noise = " + str(md.noise))
+	plt.legend(loc='best')
+	plt.grid(True, alpha=0.3)
+	# from 0 to total loop in steps of ....
+	plt.xticks(np.arange(0, md.totalLoops + 1,
+		(md.totalLoops if md.totalLoops < 20 else md.totalLoops / 10)))
+	# Save the plot to an image file
+	now = datetime.now().strftime("%Y-%m-%d-%H%M%S")
+	plt.savefig("rf-T" + str(md.tau) + "-N" + str(md.noise) + "GROWTH-" + now + ".png", dpi=300, bbox_inches='tight')
 
 
 def displayMetrics(md):
@@ -274,56 +303,12 @@ def main():
 
 	#printTime("Random Forest start")
     
-	md.tau = .80
-	md.noise = .001
-	rf = TrainingLoop(md)
-	createPlot(md)
-	md.tau = .85
-	md.noise = .001
-	rf = TrainingLoop(md)
-	createPlot(md)
-	md.tau = .90
-	md.noise = .001
-	rf = TrainingLoop(md)
-	createPlot(md)
 	md.tau = .95
-	md.noise = .001
+	md.noise = 0.1
+	md.totalLoops = 10
 	rf = TrainingLoop(md)
 	createPlot(md)
-
-	md.tau = .80
-	md.noise = .01
-	rf = TrainingLoop(md)
-	createPlot(md)
-	md.tau = .85
-	md.noise = .01
-	rf = TrainingLoop(md)
-	createPlot(md)
-	md.tau = .90
-	md.noise = .01
-	rf = TrainingLoop(md)
-	createPlot(md)
-	md.tau = .95
-	md.noise = .01
-	rf = TrainingLoop(md)
-	createPlot(md)
-
-	md.tau = .80
-	md.noise = .1
-	rf = TrainingLoop(md)
-	createPlot(md)
-	md.tau = .85
-	md.noise = .1
-	rf = TrainingLoop(md)
-	createPlot(md)
-	md.tau = .90
-	md.noise = .1
-	rf = TrainingLoop(md)
-	createPlot(md)
-	md.tau = .95
-	md.noise = .1
-	rf = TrainingLoop(md)
-	createPlot(md)
+	createDebugPlot(md)
 
 	# rfFeatureImportance(md, rf)
 	# displayMetrics(md)

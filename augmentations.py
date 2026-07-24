@@ -1,16 +1,32 @@
 import numpy as np
 
-def augmentTabular(md, y=None, noise_std=0.1):
-    # Create copy of input data
-    md.X_augmented = md.X_unlabeled.copy()
 
-    numeric_mask = np.isfinite(md.X_unlabeled).all(axis=0)
-    if numeric_mask.any():
-        md.X_augmented[:, numeric_mask] += np.random.normal(
-            0,
-            noise_std * np.std(md.X_unlabeled[:, numeric_mask], axis=0),
-            size=md.X_unlabeled.shape
-        )
+def augmentTabular(md, y=None, noise_std=0.1):
+	md.X_augmented = md.X
+
+def augmentTabular1(md, y=None, noise_std=0.1):
+	X_augmented = md.X.copy()
+	for col in range(md.X.shape[1]):
+		X_augmented[:, col] += np.random.normal(
+			0,
+			noise_std * md.X[:, col].std(),  # Scale noise by feature std
+			size=md.X.shape[0]
+		)
+	md.X_augmented = X_augmented
+
+
+
+def augmentTabular0(md, y=None, noise_std=0.1):
+# Create copy of input data
+	md.X_augmented = md.X.copy()
+
+	numeric_mask = np.isfinite(md.X).all(axis=0)
+	if numeric_mask.any():
+		md.X_augmented[:, numeric_mask] += np.random.normal(
+			0,
+			noise_std * np.std(md.X[:, numeric_mask], axis=0),
+			size=md.X.shape
+		)
 
 
 def augmentTabular_pandas (md, y=None, noise_std=0.1, flip_cat_prob=0.05):
