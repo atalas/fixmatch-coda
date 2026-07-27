@@ -139,7 +139,7 @@ def TrainingLoop(md):
 	for loop in range(md.totalLoops):
 		# Weak Augmentation (for pseudo-labeling)
 		# We only want to slightly perturb the data	
-		augmentations.augmentTabular(md, noise_std=md.noise)
+		augmentations.augmentTabular0(md, noise_std=md.noise)
 
 		# DEBUG: Output the augmented data to a tsv file 
 		# np.savetxt('output.tsv', md.X_augmented, delimiter='\t', fmt='%.8e')
@@ -188,9 +188,11 @@ def TrainingLoop(md):
 		# Keep track of accuracies for plotting
 		acc = accuracy_score(md.y_test, md.y_pred);
 		md.acc_per_loop = np.append(md.acc_per_loop, acc)
-		print(f"\tLoop: {loop} \t Accuracy: {acc:.2f}")
+		print(f"\tLoop: {loop} \t Accuracy: {acc:.4f}")
 
 	# md.y_pred = rf.predict(md.X_test)
+	outputArray(md.acc_per_loop)
+	outputArray(md.xcombined_shape)
 	return rf
 
 
@@ -282,6 +284,7 @@ def rfFeatureImportance(md, classifier):
 def outputArray(arr):
 	now = datetime.now().strftime("%Y-%m-%d-%H%M%S")
 	np.savetxt(now + ".tsv", arr, delimiter='\t', fmt='%.8e')
+	time.sleep(1)
 
 def printTime(msg):
 	starttime = datetime.now().strftime("%Y-%m-%d-%H%M%S")
