@@ -105,8 +105,8 @@ def TrainingLoop(md):
 
 	# Conservative value for RF because dataset only has 60 samples.
 	rf = RandomForestClassifier(
-		n_estimators=50,       # Start conservative
-		max_depth=7,           # Shallow trees
+		n_estimators=100,
+		max_depth=20,
 		min_samples_split=5,   # Require more samples to split
 		min_samples_leaf=2,    # Avoid tiny leaves
 		random_state=42,
@@ -281,9 +281,9 @@ def rfFeatureImportance(md, classifier):
 	starttime = datetime.now().strftime("%Y-%m-%d-%H%M%S")
 	plt.savefig(md.name + ".featimp." + starttime + ".png", dpi=300, bbox_inches='tight')
 
-def outputArray(arr):
+def outputArray(arr, fmtstr='%d'):
 	now = datetime.now().strftime("%Y-%m-%d-%H%M%S")
-	np.savetxt(now + ".tsv", arr, delimiter='\t', fmt='%.8e')
+	np.savetxt(now + ".tsv", arr, delimiter='\t', fmt=fmtstr)
 	time.sleep(1)
 
 def printTime(msg):
@@ -308,7 +308,7 @@ def main():
     
 	md.tau = .95
 	md.noise = 0.1
-	md.totalLoops = 10
+	md.totalLoops = 20
 	rf = TrainingLoop(md)
 	createPlot(md)
 	createDebugPlot(md)
