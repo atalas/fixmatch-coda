@@ -1,7 +1,7 @@
 import numpy as np
 
 
-def augmentTabular(md, y=None, noise_std=0.1):
+def dontAugmentTabular(md, y=None, noise_std=0.1):
 	md.X_augmented = md.X
 
 def augmentTabular1(md, y=None, noise_std=0.1):
@@ -17,7 +17,6 @@ def augmentTabular1(md, y=None, noise_std=0.1):
 
 
 def augmentTabular0(md, y=None, noise_std=0.1):
-# Create copy of input data
 	md.X_augmented = md.X.copy()
 
 	numeric_mask = np.isfinite(md.X).all(axis=0)
@@ -97,8 +96,8 @@ def compositionalCutmix(md, factor=2, weight=0.5):
 	idx = np.arange(n)
 	np.random.shuffle(idx)
     
-	md.X = X[idx].copy()
-	md.y = y[idx].copy()
+	md.X_augmented = X[idx].copy()
+	md.y_augmented = y[idx].copy()
 	# w[idx]
 	# return X[idx], y[idx], w[idx]
 
